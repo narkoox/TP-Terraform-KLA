@@ -1,43 +1,84 @@
 ---
+# Dépendances de base
 - name: Install base deps
   apt:
     name:
-      - apt-transport-https
       - ca-certificates
       - curl
       - gnupg
       - lsb-release
     update_cache: yes
 
-- name: Install containerd
-  shell: |
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
-    apt-get update
-    apt-get install -y containerd.io
-    mkdir -p /etc/containerd
-    containerd config default | tee /etc/containerd/config.toml
-    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-    systemctl enable --now containerd
-
-- name: Add Kubernetes apt repo
-  shell: |
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ k8s_version_repo }}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_version_repo }}/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
-    apt-get update
-
-- name: Install kube* packages
+# Purge l'éventuel containerd.io (Docker) qui désactive CRI
+- name: Purge containerd.io if present
   apt:
-    name: [kubeadm, kubelet, kubectl]
+    name: containerd.io
+    state: absent
+    purge: yes
+  register: purge_containerd_io
+  ignore_errors: true
+
+# Containerd Ubuntu + cri-tools
+- name: Install containerd & cri-tools
+  apt:
+    name:
+      - containerd
+      - cri-tools
     state: present
     update_cache: yes
 
-- name: Hold kube packages
-  shell: "apt-mark hold kubeadm kubelet kubectl"
+- name: Ensure /etc/containerd exists
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: "0755"
 
-- name: Ensure sysctl for k8s
+# Config containerd avec CRI actif + SystemdCgroup=true
+- name: Write containerd config.toml (CRI enabled)
+  copy:
+    dest: /etc/containerd/config.toml
+    mode: "0644"
+    content: |
+      version = 2
+      disabled_plugins = []
+      oom_score = 0
+
+      [plugins]
+        [plugins."io.containerd.grpc.v1.cri"]
+          sandbox_image = "registry.k8s.io/pause:3.9"
+          [plugins."io.containerd.grpc.v1.cri".registry]
+            config_path = "/etc/containerd/certs.d"
+          [plugins."io.containerd.grpc.v1.cri".containerd]
+            snapshotter = "overlayfs"
+            default_runtime_name = "runc"
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
+              [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+                runtime_type = "io.containerd.runc.v2"
+                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+                  SystemdCgroup = true
+  notify: Restart containerd
+
+# Appliquer tout de suite le redémarrage
+- name: Flush handlers (restart containerd now)
+  meta: flush_handlers
+
+# Pré-req kernel & sysctl
+- name: Ensure kernel modules file
+  copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+
+- name: Ensure overlay loaded
+  command: modprobe overlay
+  changed_when: false
+
+- name: Ensure br_netfilter loaded
+  command: modprobe br_netfilter
+  changed_when: false
+
+- name: Kubernetes sysctl settings
   copy:
     dest: /etc/sysctl.d/99-kubernetes-cri.conf
     content: |
@@ -56,28 +97,58 @@
     regexp: '(^.*\sswap\s.*$)'
     replace: '# \1'
 
-- name: Load kernel modules
-  copy:
-    dest: /etc/modules-load.d/k8s.conf
-    content: |
-      overlay
-      br_netfilter
+# Service containerd (assure démarré après flush)
+- name: Ensure containerd enabled & started
+  systemd:
+    name: containerd
+    enabled: yes
+    state: started
+    daemon_reload: yes
 
-- name: Modprobe overlay
-  modprobe:
-    name: overlay
+# Attend le socket après redémarrage effectif
+- name: Wait for containerd socket
+  wait_for:
+    path: /run/containerd/containerd.sock
     state: present
+    timeout: 180
 
-- name: Modprobe br_netfilter
-  modprobe:
-    name: br_netfilter
+# Vérification CRI (unique source of truth)
+- name: Verify CRI is reachable (crictl info)
+  shell: "crictl --runtime-endpoint=unix:///run/containerd/containerd.sock info"
+  register: crictl_info
+  retries: 15
+  delay: 4
+  until: crictl_info.rc == 0
+
+# Repo Kubernetes
+- name: Add Kubernetes apt repo
+  shell: |
+    set -e
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ k8s_version_repo }}/deb/Release.key \
+      | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_version_repo }}/deb/ /' \
+      > /etc/apt/sources.list.d/kubernetes.list
+    apt-get update
+  args:
+    creates: /etc/apt/sources.list.d/kubernetes.list
+
+- name: Install kubeadm, kubelet, kubectl
+  apt:
+    name: [kubeadm, kubelet, kubectl]
     state: present
+    update_cache: yes
+
+- name: Hold kube packages
+  command: apt-mark hold kubeadm kubelet kubectl
+  changed_when: false
 
 - name: Enable kubelet
   systemd:
     name: kubelet
     enabled: yes
 
-- name: Reload sysctl
-  ansible.builtin.command: sysctl --system
-  listen: "Reload sysctl"
+- name: Pause to let services settle
+  pause:
+    seconds: "{{ pause_short | default(10) }}"
+

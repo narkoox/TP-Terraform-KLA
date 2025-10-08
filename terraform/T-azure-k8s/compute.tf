@@ -45,6 +45,10 @@ resource "azurerm_linux_virtual_machine" "master" {
   }
 
   custom_data = base64encode(local.cloud_init_min)
+
+  depends_on = [
+      azurerm_linux_virtual_machine.worker
+  ]
 }
 
 resource "azurerm_linux_virtual_machine" "worker" {

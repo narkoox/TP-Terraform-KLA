@@ -15,6 +15,12 @@ variable "vault_address" {
   description = "Adresse de Vault"
 }
 
+variable "ssh_private_key_file" {
+  description = "Chemin de la clé privée correspondant à la clé publique stockée dans Vault"
+  type        = string
+  default     = "~/.ssh/id_rsa"   # mets /home/kevin/.ssh/id_rsa si tu préfères un chemin absolu
+}
+
 # Infra
 variable "rg_name"     { default = "rg-k8s-kubeadm" }
 variable "vnet_cidr"   { default = "10.42.0.0/16" }
@@ -33,7 +39,7 @@ variable "workers_count" { default = 2 }
 
 # VM sizes
 variable "vm_size_master" { default = "Standard_B2s" }
-variable "vm_size_worker" { default = "Standard_B2s" }
+variable "vm_size_worker" { default = "Standard_B1ms" }
 
 # Image Ubuntu (paramétrable)
 # Par défaut : Ubuntu 24.04 LTS (Noble)

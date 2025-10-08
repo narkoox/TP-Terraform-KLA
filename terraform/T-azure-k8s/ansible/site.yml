@@ -1,15 +1,21 @@
 ---
 - hosts: all
+  gather_facts: yes
   become: yes
+  serial: 1
   roles:
     - common
 
 - hosts: master
+  gather_facts: yes
   become: yes
+  serial: 1
   roles:
     - master
 
 - hosts: workers
+  gather_facts: yes
   become: yes
+  serial: 1
   roles:
     - worker

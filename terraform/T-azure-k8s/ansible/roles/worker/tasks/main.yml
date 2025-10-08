@@ -1,17 +1,44 @@
 ---
-- name: Wait for control-plane API
+- name: Check if kubelet.conf exists
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
+
+- name: Wait for control-plane API (6443)
+  when: not kubelet_conf.stat.exists
   wait_for:
-    host: "{{ groups['master'][0] }}"
+    host: "{{ hostvars[groups['master'][0]].k8s_api_ip | default(hostvars[groups['master'][0]].ansible_default_ipv4.address) }}"
     port: 6443
+    delay: 5
     timeout: 600
 
 - name: Get fresh join command from master
+  when: not kubelet_conf.stat.exists
   delegate_to: "{{ groups['master'][0] }}"
-  run_once: true
   command: kubeadm token create --ttl 2h --print-join-command
   register: join_cmd
+  retries: 10
+  delay: 10
+  until: join_cmd.rc == 0
+  run_once: false
 
-- name: Join the cluster
-  shell: "{{ join_cmd.stdout }} --ignore-preflight-errors=all"
+- name: Pause before join
+  when: not kubelet_conf.stat.exists
+  pause:
+    seconds: "{{ pause_short | default(10) }}"
+
+- name: Join the cluster (with CRI socket)
+  when: not kubelet_conf.stat.exists
+  shell: "{{ join_cmd.stdout }} --cri-socket=unix:///run/containerd/containerd.sock --ignore-preflight-errors=all"
   args:
     creates: /etc/kubernetes/kubelet.conf
+  register: join_out
+  retries: 3
+  delay: 15
+  until: join_out.rc == 0
+
+- name: Pause after join
+  when: not kubelet_conf.stat.exists
+  pause:
+    seconds: "{{ pause_medium | default(20) }}"
+
