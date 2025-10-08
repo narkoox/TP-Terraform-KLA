@@ -1,0 +1,45 @@
+---
+- name: Get primary private IP
+  command: bash -lc "hostname -I | awk '{print $1}'"
+  register: master_ip
+  changed_when: false
+
+- name: kubeadm init
+  command: >
+    kubeadm init
+    --apiserver-advertise-address={{ master_ip.stdout }}
+    --pod-network-cidr={{ pod_cidr }}
+  args:
+    creates: /etc/kubernetes/admin.conf
+
+- name: Setup kubeconfig for admin user
+  become_user: "{{ ansible_user | default('azureuser') }}"
+  shell: |
+    mkdir -p $HOME/.kube
+    sudo cp -f /etc/kubernetes/admin.conf $HOME/.kube/config
+    sudo chown -R {{ ansible_user | default('azureuser') }}:{{ ansible_user | default('azureuser') }} $HOME/.kube
+
+- name: Download Calico manifest
+  get_url:
+    url: https://raw.githubusercontent.com/projectcalico/calico/v3.27.3/manifests/calico.yaml
+    dest: /root/calico.yaml
+    mode: '0644'
+
+- name: Align Calico pod CIDR if needed
+  replace:
+    path: /root/calico.yaml
+    regexp: '192\.168\.0\.0/16'
+    replace: "{{ pod_cidr }}"
+
+- name: Apply Calico
+  command: kubectl apply -f /root/calico.yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+- name: Generate join command (2h TTL)
+  command: kubeadm token create --ttl 2h --print-join-command
+  register: join_cmd
+
+- name: Set join command fact
+  set_fact:
+    kube_join_cmd: "{{ join_cmd.stdout }}"
