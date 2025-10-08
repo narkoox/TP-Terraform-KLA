@@ -89,23 +89,6 @@ Objectif : **déployer un cluster de 3 machines** pour **kubeadm** avec **Calico
 
 ---
 
-## ✅ Bonnes pratiques
-Ne pas versionner les fichiers d’état Terraform. Exemple de `.gitignore` recommandé :
-
-```gitignore
-# Terraform
-.terraform/
-.terraform.lock.hcl
-*.tfstate
-*.tfstate.*
-*.backup
-crash.log
-override.tf
-override.tf.json
-```
-
----
-
 ## 👤 Auteur
-**Kévin Lopes Amaro** — TP encadré par **M. AVENEL Tom**.
+**Kévin Lopes Amaro** & **Chat GPT** — TP encadré par **M. AVENEL Tom**.
 
