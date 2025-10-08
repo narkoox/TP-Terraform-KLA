@@ -1,11 +1,3 @@
-data "azurerm_platform_image" "ubuntu" {
-  location  = var.location
-  publisher = "Canonical"
-  offer     = "0001-com-ubuntu-server-jammy"
-  sku       = "22_04-lts-gen2"
-  version   = "latest"
-}
-
 locals {
   cloud_init_min = <<-EOF
     #cloud-config
@@ -35,14 +27,14 @@ resource "azurerm_linux_virtual_machine" "master" {
 
   admin_ssh_key {
     username   = var.admin_user
-    public_key = data.vault_kv_secret_v2.ssh_key.data["pubkey"]
+    public_key = data.vault_kv_secret_v2.ssh_key.data["value"]
   }
 
   source_image_reference {
-    publisher = data.azurerm_platform_image.ubuntu.publisher
-    offer     = data.azurerm_platform_image.ubuntu.offer
-    sku       = data.azurerm_platform_image.ubuntu.sku
-    version   = data.azurerm_platform_image.ubuntu.version
+    publisher = var.ubuntu_publisher
+    offer     = var.ubuntu_offer
+    sku       = var.ubuntu_sku
+    version   = var.ubuntu_version
   }
 
   os_disk {
@@ -68,14 +60,14 @@ resource "azurerm_linux_virtual_machine" "worker" {
 
   admin_ssh_key {
     username   = var.admin_user
-    public_key = data.vault_kv_secret_v2.ssh_key.data["pubkey"]
+    public_key = data.vault_kv_secret_v2.ssh_key.data["value"]
   }
 
   source_image_reference {
-    publisher = data.azurerm_platform_image.ubuntu.publisher
-    offer     = data.azurerm_platform_image.ubuntu.offer
-    sku       = data.azurerm_platform_image.ubuntu.sku
-    version   = data.azurerm_platform_image.ubuntu.version
+    publisher = var.ubuntu_publisher
+    offer     = var.ubuntu_offer
+    sku       = var.ubuntu_sku
+    version   = var.ubuntu_version
   }
 
   os_disk {
@@ -87,3 +79,4 @@ resource "azurerm_linux_virtual_machine" "worker" {
 
   custom_data = base64encode(local.cloud_init_min)
 }
+
